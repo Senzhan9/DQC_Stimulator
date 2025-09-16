@@ -6,13 +6,17 @@ from qiskit.visualization import plot_histogram
 import matplotlib.pyplot as plt
 
 # Step 1: 创建 2-qubit 电路
-qc = DQCCircuit(2)
+qc = DQCCircuit(4)
+qc.Generate_COMM_Qubit([1, 2])
 
 # Step 2: 获取退极化噪声 Instruction
 noise_instr = DQCCircuit.get_noise_channel("depolarizing", p=0.5)
 
 # Step 3: 生成 Bell 态，并对 target qubit 加噪声
-qc.Generate_Bell(qc=0, qt=1, noise_channel=noise_instr)
+qc.Generate_Bell(qc=1, qt=2, noise_channel=noise_instr)
+
+#
+qc.TeleGate(0,1,3,2)
 
 # Step 4: 测量
 qc.measure_all()
