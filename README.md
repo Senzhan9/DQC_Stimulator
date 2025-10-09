@@ -1,112 +1,86 @@
-# Quantum Circuit Functions Documentation
+# Distributed Quantum Circuit 
 
-## Table of Contents
-1. [Generate_COMM_Qubit](#generate_comm_qubit)
-2. [Generate_Bell](#generate_bell)
-3. [get_noise_channel](#get_noise_channel)
-4. [TeleGate](#telegate)
+This repository demonstrates the creation, partitioning, execution, and visualization of a distributed quantum circuit using **DQCCircuit** and QPU simulation. It also shows how to save measurement results and circuit diagrams as images.
 
 ---
 
-## Generate_COMM_Qubit
+## Example Environment
 
-**Description:**  
-Mark specified qubits as communication qubits.
+- **Python**: 3.13.5
+- **Qiskit**
+- **Qiskit Aer**
+- **Qiskit IBM Runtime**
+- **Matplotlib**
 
-**Arguments:**  
+Install dependencies with pip:
 
-| Parameter      | Type       | Description                                      |
-|----------------|-----------|--------------------------------------------------|
-| `comm_qubits`  | list[int] | A list of qubit indices to be marked as COMM qubits. |
+```bash
+# Make sure you are using Python 3.13.5
+pip install qiskit qiskit-aer qiskit-ibm-runtime matplotlib
+```
 
-**Raises:**  
-- `ValueError`: If any index in `comm_qubits` is out of the valid range `[0, self.num_qubits - 1]`.
+## Quick Start
 
-**Notes:**  
-- Updates the `self.qubit_type` array, setting the type of each specified qubit to 1 (COMM qubit).
+### 1. Set the number of qubits
+Modify `num_qubits` to control the size of the simulated circuit.
 
----
+### 2. Create the quantum circuit
+Build gates and measurement operations.
 
-## Generate_Bell
+### 3. Partition the circuit
+Use the `Partition` variable to split the circuit. Supported forms:
 
-**Description:**  
-Generate a Bell state (|00> + |11>) between two communication qubits.
+- Number list: `[2,2,2]`
+- Explicit qubit indices: `[[1,3],[0,2],[4,5]]`
 
-**Arguments:**  
+### 4. Create QPUs and assign backends
+Each QPU has an `index`, which will determine which sub-circuit it compiles.  
+**Note:** Each backend supports a limited number of qubits for transpilation.
 
-| Parameter       | Type       | Description                                                                 |
-|-----------------|-----------|-----------------------------------------------------------------------------|
-| `qc`            | int       | Index of the control qubit.                                                 |
-| `qt`            | int       | Index of the target qubit.                                                  |
-| `noise_channel` | optional  | A Qiskit noise channel applied to the target qubit. Default is `None`.      |
-| `error_rate`    | float     | Probability of transmission error, must be in [0,1]. Default is 0.0.        |
+```python
+qpu1 = DQCQPU(0, "FakeVigoV2")
+qpu2 = DQCQPU(1, "FakeAthensV2")
+qpu3 = DQCQPU(2, "FakeLagosV2")
+```
 
-**Raises:**  
-- `ValueError`: If either `qc` or `qt` is not a communication qubit.  
-- `ValueError`: If `error_rate` is outside the range [0,1].
+### 5. Execute the circuit 
+```python
+result_qc = qc.Execution(Partition, [qpu1, qpu2, qpu3])
+```
 
-**Returns:**  
-- `QuantumCircuit`: The modified circuit with the generated Bell state.
-
-**Notes:**  
-- Applies a Hadamard gate to the control qubit, followed by a CNOT gate.  
-- If `noise_channel` is provided, it simulates transmission noise.  
-- `error_rate` can represent transmission errors or retransmission.
-
----
-
-## get_noise_channel
-
-**Description:**  
-Return a Qiskit noise instruction corresponding to the specified noise type.
-
-**Arguments:**  
-
-| Parameter      | Type       | Description                                                                 |
-|----------------|-----------|-----------------------------------------------------------------------------|
-| `noise_type`   | str       | Type of noise. Options: 'depolarizing', 'bitflip', 'Yflip', 'phaseflip', 'amplitude_damping', 'generalized_amplitude_damping', 'phase_damping', 'kraus'. |
-| `**kwargs`     | dict      | Additional parameters depending on noise type: `p`, `gamma`, `K0`, `K1`.   |
-
-**Raises:**  
-- `ValueError`: If `p` is provided but not in [0,1].  
-- `ValueError`: If `noise_type` is invalid.
-
-**Returns:**  
-- `Instruction`: Qiskit Instruction representing the noise channel.
-
-**Notes:**  
-- Probabilistic errors use `pauli_error` or `depolarizing_error`.  
-- Damping errors use Qiskit damping models.  
-- For 'kraus', custom Kraus operators can be passed via kwargs.
+### 6. Simulate and save output 
+Run the circuit on AerSimulator and save the measurement histogram and circuit diagrams as images.
 
 ---
 
-## TeleGate
+##  使用指南
 
-**Description:**  
-Perform a teleportation-based CNOT gate (TeleGate) using communication qubits.
+### 1. 设置量子比特数量
+修改 `num_qubits` 来控制模拟电路的规模。
 
-**Arguments:**  
+### 2. 创建量子电路
+构建量子门和测量操作。
 
-| Parameter              | Type | Description                                                              |
-|------------------------|------|--------------------------------------------------------------------------|
-| `qubit_control`        | int  | Index of the control qubit in the main circuit.                          |
-| `comm_qubit_control`   | int  | Communication qubit corresponding to the control qubit.                 |
-| `qubit_target`         | int  | Index of the target qubit in the main circuit.                           |
-| `comm_qubit_target`    | int  | Communication qubit corresponding to the target qubit.                  |
+### 3. 划分电路
+使用 `Partition` 变量对电路进行划分。支持的形式：
 
-**Raises:**  
-- `ValueError`: If any qubit index is out of [0, self.num_qubits-1].  
-- `ValueError`: If either communication qubit is not a communication qubit.
+- 按数量划分: `[2,2,2]`
+- 按指定比特索引划分: `[[1,3],[0,2],[4,5]]`
 
-**Returns:**  
-- `QuantumCircuit`: Circuit with teleportation-based CNOT applied.
+### 4. 创建 QPU 并指定后端
+每个 QPU 有一个 `index`，它将决定对应的子电路编译顺序。  
+**注意：** 每个后端支持的可 transpile 的比特数量有限。
 
-**Notes:**  
-1. Performs CNOT gates between main qubits and their communication qubits.  
-2. Applies Hadamard gate to target communication qubit.  
-3. Measures communication qubits and stores in classical register.  
-4. Applies conditional X/Z gates based on measurements.  
-5. Assumes communication qubits were set with `Generate_COMM_Qubit`.
+```python
+qpu1 = DQCQPU(0, "FakeVigoV2")
+qpu2 = DQCQPU(1, "FakeAthensV2")
+qpu3 = DQCQPU(2, "FakeLagosV2")
+```
 
----
+### 5. 执行电路
+```python
+result_qc = qc.Execution(Partition, [qpu1, qpu2, qpu3])
+```
+
+### 6. 模拟并保存输出
+在 AerSimulator 上运行电路，并将测量结果直方图和电路图保存为图片。
