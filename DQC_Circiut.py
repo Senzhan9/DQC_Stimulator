@@ -16,7 +16,6 @@ from qiskit_ibm_runtime.fake_provider import (
     FakeAlmadenV2,
     FakeAthensV2        # 5
 )
-from qiskit.circuit.controlflow import IfElseOp
 
 from qiskit_aer.noise import (
     depolarizing_error, pauli_error,
@@ -27,6 +26,9 @@ from qiskit.quantum_info import Kraus
 
 import numpy as np
 import copy  
+
+import matplotlib.pyplot as plt
+from qiskit.visualization import plot_histogram
 
 from qiskit import QuantumRegister
 
@@ -675,71 +677,68 @@ class DQCCircuit(QuantumCircuit):
 
         return new_circ
 
+    
+num_qubits = 6
+qc = DQCCircuit(num_qubits, num_qubits)
 
-qc = DQCCircuit(6, 6)
+# Build circuit
 qc.h(0)
 qc.cx(0,1)
 qc.cx(1,2)
 qc.cx(2,3)
 qc.cx(3,4)
 qc.cx(4,5)
-qc.measure(0,0)
-qc.measure(1,1)
-qc.measure(2,2)
-qc.measure(3,3)
-qc.measure(4,4)
-qc.measure(5,5)
 
-# Partition = [[0,1],[1,2],[3,4]]
+# Measure all qubits
+for i in range(num_qubits):
+    qc.measure(i,i)
+
+# Partition and QPUs
 Partition = [2,2,2]
 qpu1 = DQCQPU(0, "FakeVigoV2")
 qpu2 = DQCQPU(1, "FakeAthensV2")
 qpu3 = DQCQPU(2, "FakeLagosV2")
 
+# Execute distributed circuit
 result_qc = qc.Execution(Partition, [qpu1, qpu2, qpu3])
 
-import matplotlib.pyplot as plt
-
-# 1. 创建模拟器
+# Create simulator
 sim = AerSimulator()
 
-# 2. 对 result_qc 进行 transpile
+# Transpile and run
 compiled = transpile(result_qc, sim)
-
-# 3. 运行模拟器
 job = sim.run(compiled, shots=1000)
 result = job.result()
 
-# 4. 获取测量结果
+# Get measurement counts
 counts = result.get_counts()
 
-# 新建一个字典，只保留每个比特串的前 5 个比特
+# Keep only first 6 bits
 new_counts = {}
 for bitstring, cnt in counts.items():
     bits = bitstring[:6]
     new_counts[bits] = new_counts.get(bits, 0) + cnt
 
-# 5. 可选：绘制直方图
-from qiskit.visualization import plot_histogram
-# 1️⃣ 保存测量结果直方图
+# Save plots
+
+# 1️⃣ Measurement histogram
 plt.figure(figsize=(6, 4))
 plot_histogram(new_counts)
 plt.title("Measurement Results")
 plt.savefig("histogram.png", dpi=300, bbox_inches='tight')
 plt.close()
 
-# 2️⃣ 保存原始电路图
+# 2️⃣ Original circuit diagram
 fig1 = qc.draw("mpl", scale=0.5)
 fig1.savefig("original_circuit.png", dpi=300, bbox_inches='tight')
 plt.close(fig1)
 
-# 3️⃣ 保存合并后的电路图
+# 3️⃣ Merged/executed circuit diagram
 fig2 = result_qc.draw("mpl", scale=0.5)
-fig2.savefig("merged_circuit.png", dpi=300, bbox_inches='tight')
+fig2.savefig("result_circuit.png", dpi=300, bbox_inches='tight')
 plt.close(fig2)
 
-print("✅ 三张图已保存：histogram.png、original_circuit.png、merged_circuit.png")
-
+print("✅ Three figures saved: histogram.png, original_circuit.png, result_circuit.png")
 
 # debug
 # for i, tc in enumerate(result_qc):
