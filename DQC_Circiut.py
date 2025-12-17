@@ -890,11 +890,15 @@ class DQCCircuit(QuantumCircuit):
             qargs = inst_obj.qubits
             cargs = inst_obj.clbits
 
-            if isinstance(inst, (RemoteGate, MX, MZ, AnsM, IF_Z, IF_X, MS)):               # 在同样的 qubits 上加 barrier
+            if isinstance(inst, (MX, MZ, AnsM, IF_Z, IF_X, MS, S_CX)):               # 在同样的 qubits 上加 barrier
                 new_circ.barrier(*qargs)
                 new_circ.append(inst, qargs, cargs)
                 new_circ.barrier(*qargs)
                 # print(f"[Info] Protecting instruction: {inst.name} on qubits {[q for q in qargs]}")
+            elif isinstance(inst, (RemoteGate)):
+                new_circ.barrier()
+                new_circ.append(inst, qargs, cargs)
+                new_circ.barrier()
             else:
                 new_circ.append(inst, qargs, cargs)
 
