@@ -6,6 +6,7 @@ from qiskit.circuit import Reset, Measure, ClassicalRegister
 from qiskit.visualization import plot_histogram
 from qiskit import QuantumRegister
 from qiskit.quantum_info import Kraus
+from qiskit.converters import circuit_to_dag
 from qiskit_ibm_runtime.fake_provider import (
     FakeVigoV2,         # 5
     FakeLagosV2,        # 7
@@ -348,9 +349,14 @@ class DQCCircuit(QuantumCircuit):
         self.physic_split()
         
         self.transpile_subcircuits(qpus)
-        for sub_circ in self.sub_circuit_trans:
-            sub_circ.draw("mpl", scale = 0.5)
-            plt.show()
+        # for sub_circ in self.sub_circuit_trans:
+        #     sub_circ.draw("mpl", scale = 0.5, fold = 100)
+        #     plt.show()
+
+        # dag = circuit_to_dag(self.sub_circuit_trans[2])
+        # dag.draw(output='mpl')  
+        # plt.show()
+
         result_qc = self.merge_trans_circuits(comm_noise)
         
         return result_qc
@@ -1088,7 +1094,7 @@ class DQCCircuit(QuantumCircuit):
             idx = getattr(inst, "index", None)
             mea = getattr(inst,"mea", None)
 
-            print(f"\n[STEP] now={now}, target={target},idx={idx}, inst={inst.name}, indices={indices}")
+            # print(f"\n[STEP] now={now}, target={target},idx={idx}, inst={inst.name}, indices={indices}")
 
             # === R 门配对生成 Bell 态 ===
             if op_name == "R" and idx not in paired_done:
