@@ -1,0 +1,10 @@
+LICENSE
+README.md
+pyproject.toml
+src/dqc_simulator/__init__.py
+src/dqc_simulator/backend.py
+src/dqc_simulator/dqc_simulator.py
+src/dqc_simulator.egg-info/PKG-INFO
+src/dqc_simulator.egg-info/SOURCES.txt
+src/dqc_simulator.egg-info/dependency_links.txt
+src/dqc_simulator.egg-info/top_level.txt
