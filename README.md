@@ -6,81 +6,105 @@ This repository demonstrates the creation, partitioning, execution, and visualiz
 
 ## Example Environment
 
-- **Python**: 3.13.5
+- **Python**: 3.13.X
 - **Qiskit**
 - **Qiskit Aer**
 - **Qiskit IBM Runtime**
 - **Matplotlib**
+- **pylatexenc**
 
 Install dependencies with pip:
 
 ```bash
 # Make sure you are using Python 3.13.5
-pip install qiskit qiskit-aer qiskit-ibm-runtime matplotlib
+pip install qiskit qiskit-aer qiskit-ibm-runtime matplotlib pylatexenc
 ```
 
-## Quick Start
+## Quick Start Guide
 
-### 1. Set the number of qubits
-Modify `num_qubits` to control the size of the simulated circuit.
-
-### 2. Create the quantum circuit
-Build gates and measurement operations.
-
-### 3. Partition the circuit
-Use the `Partition` variable to split the circuit. Supported forms:
-
-- Number list: `[2,2,2]`
-- Explicit qubit indices: `[[1,3],[0,2],[4,5]]`
-
-### 4. Create QPUs and assign backends
-Each QPU has an `index`, which will determine which sub-circuit it compiles.  
-**Note:** Each backend supports a limited number of qubits for transpilation.
-
+### 1. Define Circuit Size
+Set the number of qubits for your quantum circuit:
 ```python
-qpu1 = DQCQPU(0, "FakeVigoV2")
-qpu2 = DQCQPU(1, "FakeAthensV2")
-qpu3 = DQCQPU(2, "FakeLagosV2")
+numbits = 12  # Total logical qubits
 ```
 
-### 5. Execute the circuit 
+### 2. Create Global Quantum Circuit
+Build your quantum algorithm (e.g., GHZ state preparation):
 ```python
-result_qc = qc.Execution(Partition, [qpu1, qpu2, qpu3])
+qc0 = QuantumCircuit(numbits, numbits)
+qc0.h(0)
+for i in range(numbits - 1):
+    qc0.cx(i, i + 1)
+# Add measurements
+for i in range(numbits):
+    qc0.measure(i, i)
 ```
 
-### 6. Simulate and save output 
-Run the circuit on AerSimulator and save the measurement histogram and circuit diagrams as images.
-
----
-
-##  使用指南
-
-### 1. 设置量子比特数量
-修改 `num_qubits` 来控制模拟电路的规模。
-
-### 2. 创建量子电路
-构建量子门和测量操作。
-
-### 3. 划分电路
-使用 `Partition` 变量对电路进行划分。支持的形式：
-
-- 按数量划分: `[2,2,2]`
-- 按指定比特索引划分: `[[1,3],[0,2],[4,5]]`
-
-### 4. 创建 QPU 并指定后端
-每个 QPU 有一个 `index`，它将决定对应的子电路编译顺序。  
-**注意：** 每个后端支持的可 transpile 的比特数量有限。
-
+### 3. Convert to Distributed Circuit
+Transform the standard circuit into a distributed format:
 ```python
-qpu1 = DQCQPU(0, "FakeVigoV2")
-qpu2 = DQCQPU(1, "FakeAthensV2")
-qpu3 = DQCQPU(2, "FakeLagosV2")
+qc = DQCCircuit(qc0)
 ```
 
-### 5. 执行电路
+### 4. Define Circuit Partition
+Specify how to distribute qubits across QPUs:
 ```python
-result_qc = qc.Execution(Partition, [qpu1, qpu2, qpu3])
+# Option 1: Equal distribution by count
+Partition = [3, 3, 3, 3]  # 4 QPUs, 3 qubits each
+
+# Option 2: Explicit qubit assignment
+Partition = [[0,1,2], [3,4,5], [6,7,8], [9,10,11]]
 ```
 
-### 6. 模拟并保存输出
-在 AerSimulator 上运行电路，并将测量结果直方图和电路图保存为图片。
+### 5. Configure QPU Manager
+Set up heterogeneous QPU group with network topology:
+```python
+QPUGROUP = QPUManager()
+
+# Add QPUs with different backends
+QPUGROUP.add_qpu(DQCQPU(0, "FakeVigoV2"))
+QPUGROUP.add_qpu(DQCQPU(1, "FakeLagosV2"))
+QPUGROUP.add_qpu(DQCQPU(2, "FakeAthensV2"))
+QPUGROUP.add_qpu(DQCQPU(3, "FakeManilaV2"))
+
+# Define inter-QPU connections
+dis = 5  # Communication distance/cost
+QPUGROUP.add_coonnection(0, 1, distance=dis)
+QPUGROUP.add_coonnection(1, 2, distance=dis)
+QPUGROUP.add_coonnection(2, 3, distance=dis)
+```
+
+### 6. Execute Distributed Circuit
+Run with communication noise modeling:
+```python
+result_qc = qc.Execution(
+    Partition,
+    QPUGROUP,
+    comm_noise=True  # Enable teleportation noise
+)
+```
+
+### 7. Simulate and Analyze Results
+Execute on AerSimulator with combined noise model:
+```python
+# Get combined noise model (local QPU + communication)
+noise_model = qc.get_noise_model()
+sim = AerSimulator(noise_model=noise_model)
+
+# Transpile and run
+compiled = transpile(result_qc, sim)
+job = sim.run(compiled, shots=10_000)
+result = job.result()
+```
+
+### 8. Visualize and Export
+Generate publication-ready figures:
+```python
+# Measurement histogram
+fig1 = plot_histogram(counts_res)
+fig1.savefig("GHZ_12qubit_DQC_histogram.pdf")
+
+# Circuit diagram
+fig2 = result_qc.draw("mpl", scale=0.7, fold=100)
+fig2.savefig("GHZ_12qubit_DQC_circuit.pdf")
+```
