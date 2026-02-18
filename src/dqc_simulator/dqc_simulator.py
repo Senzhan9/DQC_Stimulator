@@ -34,6 +34,7 @@ from qiskit_aer.noise import (
 
 import numpy as np
 import copy  
+import time
 import matplotlib.pyplot as plt
 
 class RemoteGate(Instruction):
@@ -336,7 +337,11 @@ class DQCCircuit(QuantumCircuit):
         self.Num_RemoteGate = 0
 
     # 执行
-    def Execution(self, config, qpugroup, comm_noise = False):
+    def Execution(self, config, qpugroup, comm_noise=False, measure_time=False):
+        # 开始计时
+        if measure_time:
+            start_time = time.time()
+        
         self.qpugroup = qpugroup
         qpus = self.qpugroup.qpus
 
@@ -358,6 +363,12 @@ class DQCCircuit(QuantumCircuit):
         # plt.show()
 
         result_qc = self.merge_trans_circuits(comm_noise)
+        
+        # 结束计时并输出
+        if measure_time:
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"SimDisQ Execution time: {elapsed_time:.4f} seconds")
         
         return result_qc
 
