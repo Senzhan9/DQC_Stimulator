@@ -24,6 +24,7 @@ from qiskit_ibm_runtime.fake_provider import (
 
 # Backend IonQ
 from .backend import IonQ
+from .features import extract_feature_bundle
 
 from qiskit_aer.noise import (
     NoiseModel,
@@ -34,6 +35,7 @@ from qiskit_aer.noise import (
 
 import numpy as np
 import copy  
+import time
 import matplotlib.pyplot as plt
 
 class RemoteGate(Instruction):
@@ -335,8 +337,72 @@ class DQCCircuit(QuantumCircuit):
         self.Num_Entanglement_swapping = 0          # 纠缠交换次数统计
         self.Num_RemoteGate = 0
 
+    def get_feature_bundle(
+        self,
+        circuit=None,
+        backend=None,
+        transpile_first=False,
+        optimization_level=3,
+        seed_transpiler=7,
+    ):
+        """
+        提取完整特征信息。
+        backend 为 None 时，默认使用 self.qpugroup 的第一个 QPU backend。
+        """
+        target_circuit = self if circuit is None else circuit
+
+        if backend is None:
+            if self.qpugroup is not None and getattr(self.qpugroup, "qpus", None):
+                backend = self.qpugroup.qpus[0].backend
+
+        return extract_feature_bundle(
+            target_circuit,
+            backend=backend,
+            transpile_first=transpile_first,
+            optimization_level=optimization_level,
+            seed_transpiler=seed_transpiler,
+        )
+
+    def get_feature_groups(
+        self,
+        circuit=None,
+        backend=None,
+        transpile_first=False,
+        optimization_level=3,
+        seed_transpiler=7,
+    ):
+        """提取分组特征。"""
+        return self.get_feature_bundle(
+            circuit=circuit,
+            backend=backend,
+            transpile_first=transpile_first,
+            optimization_level=optimization_level,
+            seed_transpiler=seed_transpiler,
+        )["feature_groups"]
+
+    def get_feature_vector(
+        self,
+        circuit=None,
+        backend=None,
+        transpile_first=False,
+        optimization_level=3,
+        seed_transpiler=7,
+    ):
+        """提取扁平特征向量。"""
+        return self.get_feature_bundle(
+            circuit=circuit,
+            backend=backend,
+            transpile_first=transpile_first,
+            optimization_level=optimization_level,
+            seed_transpiler=seed_transpiler,
+        )["feature_vector"]
+
     # 执行
-    def Execution(self, config, qpugroup, comm_noise = False):
+    def Execution(self, config, qpugroup, comm_noise=False, measure_time=False):
+        # 开始计时
+        if measure_time:
+            start_time = time.time()
+        
         self.qpugroup = qpugroup
         qpus = self.qpugroup.qpus
 
@@ -358,6 +424,12 @@ class DQCCircuit(QuantumCircuit):
         # plt.show()
 
         result_qc = self.merge_trans_circuits(comm_noise)
+        
+        # 结束计时并输出
+        if measure_time:
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"SimDisQ Execution time: {elapsed_time:.4f} seconds")
         
         return result_qc
 

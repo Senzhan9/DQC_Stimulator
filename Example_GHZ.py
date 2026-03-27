@@ -40,7 +40,7 @@ from qiskit_ibm_runtime.fake_provider import (
 # =========================
 from dqc_simulator import DQCCircuit, DQCQPU, QPUManager
 from dqc_simulator.backend import IonQ
-
+from dqc_simulator import extract_feature_vector, extract_feature_groups
 
 # ============================================================
 # Fidelity metric: Hellinger fidelity for GHZ state
@@ -87,6 +87,8 @@ for i in range(numbits - 1):
 for i in range(numbits):
     qc0.measure(i, i)
 
+for instr in qc0.data:
+    print(instr)
 
 # ============================================================
 # Step 2: Transform into Distributed Quantum Circuit
@@ -133,34 +135,52 @@ sim = AerSimulator(noise_model=noise_model)
 # Transpile for backend
 compiled = transpile(result_qc, sim)
 
-# Run simulation
-job = sim.run(compiled, shots=10_000)
-result = job.result()
+feature_vector = extract_feature_vector(compiled)
+feature_groups = extract_feature_groups(compiled)
+
+print("Feature vector:", feature_vector)
+print("Communication count (kraus):", feature_vector.get("comm_count"))
+print(
+    "Communication noise mean/max/min/std:",
+    feature_groups["group_c_noise_strength"]["comm_noise_mean"],
+    feature_groups["group_c_noise_strength"]["comm_noise_max"],
+    feature_groups["group_c_noise_strength"]["comm_noise_min"],
+    feature_groups["group_c_noise_strength"]["comm_noise_std"],
+)
+# for instr in compiled.data:
+#     print(instr)
+
+# compiled.draw("mpl", scale=0.7, fold=100)
+# plt.show()
+
+# # Run simulation
+# job = sim.run(compiled, shots=10_000)
+# result = job.result()
 
 
-# ============================================================
-# Step 5: Post-processing measurement results
-# ============================================================
-counts = result.get_counts()
+# # ============================================================
+# # Step 5: Post-processing measurement results
+# # ============================================================
+# counts = result.get_counts()
 
-# Only keep the first 12 bits (global logical qubits)
-counts_res = {}
-for bitstring, cnt in counts.items():
-    bits = bitstring[:12]
-    counts_res[bits] = counts_res.get(bits, 0) + cnt
-
-
-# ============================================================
-# Step 6: Visualization and PDF export
-# ============================================================
-
-# --- 6.1 Histogram ---
-fig1 = plot_histogram(counts_res)
-fig1.savefig("GHZ_12qubit_DQC_histogram.pdf")
+# # Only keep the first 12 bits (global logical qubits)
+# counts_res = {}
+# for bitstring, cnt in counts.items():
+#     bits = bitstring[:12]
+#     counts_res[bits] = counts_res.get(bits, 0) + cnt
 
 
-# --- 6.2 Circuit diagram ---
-fig2 = result_qc.draw("mpl", scale=0.7, fold=100)
-fig2.savefig("GHZ_12qubit_DQC_circuit.pdf")
+# # ============================================================
+# # Step 6: Visualization and PDF export
+# # ============================================================
 
-plt.show()
+# # --- 6.1 Histogram ---
+# fig1 = plot_histogram(counts_res)
+# fig1.savefig("GHZ_12qubit_DQC_histogram.pdf")
+
+
+# # --- 6.2 Circuit diagram ---
+# fig2 = result_qc.draw("mpl", scale=0.7, fold=100)
+# fig2.savefig("GHZ_12qubit_DQC_circuit.pdf")
+
+# plt.show()
