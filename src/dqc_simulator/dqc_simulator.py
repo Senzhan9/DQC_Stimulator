@@ -281,7 +281,7 @@ class DQCQPU:
         Z = np.array([[1, 0], [0, -1]], dtype=complex)
         K_depol = [sqrt1mp * I, sqrt_p3 * X, sqrt_p3 * Y, sqrt_p3 * Z]
 
-        # Combine channels (amplitude → depolarizing)
+        # Combine channels in order: amplitude damping, then depolarizing.
         K_combined = [D @ A for D in K_depol for A in K_amp]
 
         # Create Qiskit Kraus instruction
@@ -298,44 +298,44 @@ class DQCQPU:
 # -------------------------------------------------------------
 class DQCCircuit(QuantumCircuit):
     def __init__(self, *args, **kwargs):
-        #  用已有 QuantumCircuit 初始化
+        # Initialize from an existing QuantumCircuit.
         if len(args) == 1 and isinstance(args[0], QuantumCircuit):
             qc = args[0]
-            # 保留原寄存器结构
+            # Preserve the original register structure.
             super().__init__(*qc.qregs, *qc.cregs,
                              name=qc.name,
                              global_phase=qc.global_phase,
                              metadata=copy.deepcopy(qc.metadata) if qc.metadata else None)
 
-            # 复制电路数据
+            # Copy circuit data.
             self.data = copy.deepcopy(qc.data)
         else:
             super().__init__(*args, **kwargs)
 
-        self.step = []                              # 各阶段存储的电路图
+        self.step = []                              # Circuit snapshots for each stage
         self.step.append(copy.deepcopy(self))
 
-        self.sub_circuit = []                       # 子电路
-        self.sub_circuit_trans = []                 # 编译后的子电路集合
-        self.result_circuit = None                  # 最终结果电路
+        self.sub_circuit = []                       # Sub-circuits
+        self.sub_circuit_trans = []                 # Transpiled sub-circuits
+        self.result_circuit = None                  # Final merged circuit
 
-        self.partition = []                         # 划分
-        self.qubit_group = [-1] * self.num_qubits   # 比特分组
-        self.Entanglement_swapping = []             # 纠缠信息
-        self.swap_routes = []                       # 交换路径
+        self.partition = []                         # Circuit partition
+        self.qubit_group = [-1] * self.num_qubits   # Qubit-to-group mapping
+        self.Entanglement_swapping = []             # Entanglement swapping flags
+        self.swap_routes = []                       # Swap routes
 
-        self.qubit_tele = []                        # 比特对应的通信比特位置
+        self.qubit_tele = []                        # Communication qubit index for each qubit
 
         self.qpus = []
-        self.merged_qubits_map = {}               # 合并后比特映射
-        self.merged_qubits_map_reverse = {}         # 反向映射
+        self.merged_qubits_map = {}                 # Merged global-to-local qubit map
+        self.merged_qubits_map_reverse = {}         # Reverse qubit map
 
         self.qpugroup = None
 
-        self.Num_Entanglement_swapping = 0          # 纠缠交换次数统计
+        self.Num_Entanglement_swapping = 0          # Entanglement swapping count
         self.Num_RemoteGate = 0
 
-    # 执行
+    # Execute the distributed-circuit workflow.
     def Execution(self, config, qpugroup, comm_noise = False):
         self.qpugroup = qpugroup
         qpus = self.qpugroup.qpus
@@ -370,14 +370,14 @@ class DQCCircuit(QuantumCircuit):
         partition = []
 
         if all(isinstance(x, int) for x in config):
-            # 按长度生成索引列表
+            # Generate index groups by group size.
             start = 0
             for s in config:
                 indices = list(range(start, start + s))
                 partition.append(indices)
                 start += s
         elif all(isinstance(x, (list, tuple)) for x in config):
-            # 按指定索引组合, 并排序
+            # Use the specified index groups and sort each group.
             for sub in config:
                 partition.append(sorted(sub))
         else:
@@ -395,52 +395,52 @@ class DQCCircuit(QuantumCircuit):
     # step[1]
     def valid_trans(self):
         """
-        遍历 old_circ 的指令，检查是否跨组多比特门。
-        如果跨组且不是 CX，则分解后 append 到 new_circ；
-        如果同组或是 CX，则直接 append。
+        Walk through old_circ instructions and detect cross-group multi-qubit gates.
+        Cross-group non-CX gates are decomposed before being appended to new_circ.
+        Same-group gates and CX gates are appended directly.
         
-        参数:
-            new_circ: DQCCircuit，目标电路
-            old_circ: DQCCircuit，源电路（step[0]）
+        Args:
+            new_circ: Target DQCCircuit.
+            old_circ: Source DQCCircuit from step[0].
         """
         old_circ = self
 
-         # === 1. 构建新电路（仅复制量子比特）===
+         # === 1. Build a new circuit with quantum bits only. ===
         new_circ = DQCCircuit(old_circ.qubits)
         new_circ.qubit_group = old_circ.qubit_group
         new_circ.qubit_tele = old_circ.qubit_tele
         print("Qubit Group:", new_circ.qubit_group)
 
-        # === 2. 继承所有经典寄存器 ===
-        # 复制通信寄存器（如果有）
+        # === 2. Preserve all classical registers. ===
+        # Copy communication registers, if any.
         comm_cregs = [creg for creg in getattr(old_circ, "cregs", []) if "Tele" in creg.name]
         for comm_creg in comm_cregs:
             new_circ.add_register(ClassicalRegister(len(comm_creg), comm_creg.name))
 
-        # 复制原始寄存器（如果有）
+        # Copy original registers, if any.
         orig_cregs = [creg for creg in getattr(old_circ, "cregs", []) if "Tele" not in creg.name]
         for orig_creg in orig_cregs:
             new_circ.add_register(ClassicalRegister(len(orig_creg), orig_creg.name))
 
         for instri in old_circ.data:
-            instr = instri.operation   # 量子门或操作对象
-            qargs = instri.qubits      # 作用的量子比特列表
-            cargs = instri.clbits      # 作用的经典比特列表
+            instr = instri.operation   # Quantum gate or operation object
+            qargs = instri.qubits      # Target quantum bits
+            cargs = instri.clbits      # Target classical bits
             
-            # 先处理cx
+            # Handle CX first.
             if instr.name in ["cx"]:
                 new_circ.append(instr, qargs, cargs)
                 continue
 
-            # 单比特门直接 append
+            # Append single-qubit gates directly.
             if len(qargs) <= 1:
                 new_circ.append(instr, qargs, cargs)
                 continue
             
-            # 多比特门，判断是否跨组
+            # Check whether a multi-qubit gate crosses groups.
             groups = [new_circ.qubit_group[old_circ.get_index(q)] for q in qargs]
             if len(set(groups)) > 1:
-                # 跨组且不是 CX，分解
+                # Decompose cross-group non-CX gates.
                 ci = CircuitInstruction(instr, qargs, cargs)
                 decomposed_instrs = self.decompose_and_get_data(ci)
                 for di in decomposed_instrs:
@@ -448,7 +448,7 @@ class DQCCircuit(QuantumCircuit):
                     mapped_clbits = [new_circ.clbits[old_circ.get_index(c)] for c in di.clbits]
                     new_circ.append(di.operation, mapped_qubits, mapped_clbits)
             else:
-                # 同组，多比特门直接 append
+                # Append same-group multi-qubit gates directly.
                 new_circ.append(instr, qargs, cargs)
         
         self.step.append(new_circ)
@@ -456,30 +456,30 @@ class DQCCircuit(QuantumCircuit):
     
     # step[2]
     def check_swap_entanglement(self):
-        """检查跨 QPU 纠缠，如果无直接连接则寻找可行的 SWAP 路径"""
+        """Check cross-QPU entanglement and find a SWAP route when direct links are missing."""
         swap_routes = []
         qpu_map = self.qpugroup.map
 
         old_circ = self.step[1]
 
-         # === 1. 构建新电路（仅复制量子比特）===
+         # === 1. Build a new circuit with quantum bits only. ===
         new_circ = DQCCircuit(old_circ.qubits)
 
         for creg in getattr(old_circ, "cregs", []):
             new_circ.add_register(ClassicalRegister(len(creg), creg.name))
 
-        # 遍历电路中的每一个 CX 操作
+        # Visit each CX operation in the circuit.
         for instr in old_circ.data:
             if instr.operation.name == "cx":
                 ctrl, tgt = instr.qubits
                 g_ctrl = self.qubit_group[self.get_index(ctrl)]
                 g_tgt = self.qubit_group[self.get_index(tgt)]
 
-                # 如果控制和目标在不同 QPU 上
+                # If control and target are on different QPUs.
                 if g_ctrl != g_tgt:
-                    # 检查是否直接连接
+                    # Check whether the QPUs are directly connected.
                     if not self.qpugroup.check_connection(g_ctrl, g_tgt):
-                        # --- 没有直接连接：寻找最短路径 ---
+                        # --- No direct link: find the shortest route. ---
                         path = self._find_shortest_path(qpu_map, g_ctrl, g_tgt)
                         if path:
                             swap_routes.append(path)
@@ -489,16 +489,16 @@ class DQCCircuit(QuantumCircuit):
                         else:
                             print(f"[Warning] No route found between QPU {g_ctrl} and {g_tgt}")
                     else:
-                        # 直接连接，直接添加 CX 操作
+                        # Direct link: append the CX operation.
                         new_circ.append(instr.operation, instr.qubits, instr.clbits)
                 else:
-                    # 同组，直接添加 CX 操作
+                    # Same group: append the CX operation.
                     new_circ.append(instr.operation, instr.qubits, instr.clbits)        
             else:
                 new_circ.append(instr.operation, instr.qubits, instr.clbits)
 
         for path in swap_routes:
-            # 取除首尾外的中间节点
+            # Mark intermediate nodes, excluding the source and destination.
             for node in path[1:-1]:
                 self.Entanglement_swapping[node] = 1
                 
@@ -506,48 +506,48 @@ class DQCCircuit(QuantumCircuit):
         self.step.append(new_circ)
 
     def _find_shortest_path(self, graph, start, end):
-        """使用 BFS 在邻接表图中寻找最短路径"""
+        """Find the shortest path in an adjacency-list graph with BFS."""
         from collections import deque
 
         visited = set()
-        queue = deque([[start]])  # 队列中每个元素是路径 list
+        queue = deque([[start]])  # Each queue item is a path list.
 
         while queue:
             path = queue.popleft()
             node = path[-1]
             if node == end:
-                return path  # 找到路径
+                return path  # Path found.
 
             if node not in visited:
                 visited.add(node)
-                for neighbor, _ in graph.get(node, []):  # 遍历邻居
+                for neighbor, _ in graph.get(node, []):  # Visit neighbors.
                     if neighbor not in visited:
                         queue.append(path + [neighbor])
 
-        return None  # 无路径                     
+        return None  # No path found.
 
     # step[3]
     def rearrange_with_partition(self):
         """
-        根据 partition 重新排列 qubits, 每组加一个通信比特,
-        并为 group 之间的通信分配 classical bits。
+        Rearrange qubits according to partition, add one communication qubit per group,
+        and allocate classical bits for inter-group communication.
         """
         if not self.partition:
-            raise ValueError("请先设置 self.partition")
+            raise ValueError("Please set self.partition first.")
 
         partition = self.partition
         num_groups = len(partition)
 
-        # classical bit 数量 = g * (g-1)
+        # Number of classical bits = g * (g - 1).
         comm_creg = ClassicalRegister(num_groups * (num_groups - 1), "Tele")
 
-        # 每组 qubits 数量 = 原本 + 1(comm)
+        # Number of qubits per group = original qubits + 1 communication qubit.
 
-        # 先统计 partition 中普通 qubit 数量
+        # Count regular qubits in the partition.
         total_qubits = sum(len(group) for group in partition)
-        # 给每组添加一个通信 qubit
+        # Add one communication qubit per group.
         total_qubits += len(partition)
-        # 给每个需要交换纠缠的 QPU 添加一个通信 qubit
+        # Add one extra communication qubit for each QPU that needs entanglement swapping.
         total_qubits += self.Entanglement_swapping.count(1)
 
         new_qreg = QuantumRegister(total_qubits, "q")
@@ -555,33 +555,33 @@ class DQCCircuit(QuantumCircuit):
         new_circ = DQCCircuit(new_qreg, comm_creg)
 
         old_circ = self.step[2]
-        # === 4. 保留原始经典寄存器信息 ===
-        # 如果原始电路 self 中有经典寄存器
+        # === 4. Preserve original classical-register metadata. ===
+        # Preserve original classical registers when they exist.
         if hasattr( old_circ, "clbits") and old_circ.clbits:
-            # 尝试从 self.cregs 中找到原寄存器名
+            # Try to reuse the original register name from self.cregs.
             if hasattr( old_circ, "cregs") and old_circ.cregs:
-                # 取第一个 ClassicalRegister 的名字
+                # Use the name of the first ClassicalRegister.
                 orig_name =  old_circ.cregs[0].name
             else:
-                orig_name = "c"  # 如果没有记录，则默认命名为 "c"
+                orig_name = "c"  # Default to "c" when no name is recorded.
 
-            # 使用原寄存器名创建新的 ClassicalRegister
+            # Create a new ClassicalRegister with the original name.
             orig_creg = ClassicalRegister(len(old_circ.clbits), orig_name)
             new_circ.add_register(orig_creg)
 
-            # 保存引用方便之后访问
+            # Keep a reference for later access.
             new_circ.orig_creg = orig_creg
         else:
             new_circ.orig_creg = None
 
-        # ===== 建立旧 qubit -> 新 qubit 映射 =====
+        # ===== Build the old-qubit to new-qubit mapping. =====
         old2new = {}
         group_comm_qubits = []
         new_index = 0
 
         for indices in partition:
-            # 字典映射量子寄存器
-            # group 内 qubit
+            # Map quantum-register entries.
+            # Qubits inside the group.
             for qi in indices:
                 old2new[qi] = new_qreg[new_index]   
                 new_index += 1
@@ -590,12 +590,12 @@ class DQCCircuit(QuantumCircuit):
             group_comm_qubits.append(comm_q)
             new_index += 1
             if self.Entanglement_swapping[self.qubit_group[indices[0]]] == 1:
-                # 需要交换纠缠的 QPU 多加一个 comm qubit
+                # Add one extra communication qubit for QPUs that need entanglement swapping.
                 extra_comm_q = new_qreg[new_index]
                 group_comm_qubits.append(extra_comm_q)
                 new_index += 1
 
-        # ===== 遍历原电路, 重映射到新电路 =====
+        # ===== Visit the original circuit and remap operations to the new circuit. =====
         for instr in old_circ.data:
             qubit_indices = [old_circ.get_index(q) for q in instr.qubits]
 
@@ -603,39 +603,39 @@ class DQCCircuit(QuantumCircuit):
                 new_qargs = [old2new[qi] for qi in qubit_indices]
                 new_circ.append(instr.operation, new_qargs, instr.clbits)
 
-        # ==== 给 new_circ.qubit_group 填值 =====
+        # ==== Populate new_circ.qubit_group. =====
         new_circ.qubit_group = []
         for gid, group in enumerate(partition):
-            base_count = len(group) + 1  # 普通 + 通信
+            base_count = len(group) + 1  # Regular + communication qubits
             if self.Entanglement_swapping[gid] == 1:
-                base_count += 1  # 额外加一个 SWAP qubit
+                base_count += 1  # Add one extra SWAP qubit.
             new_circ.qubit_group.extend([gid] * base_count)
 
-        # ===== 给 new_circ.qubit_tele 填值 =====
+        # ===== Populate new_circ.qubit_tele. =====
         qubit_tele = [-1] * len(new_qreg) 
 
         idx = 0
         for gid, group in enumerate(partition):
-            # 每个分区的普通 + 通信 qubit 数量
+            # Regular and communication qubits for each partition.
             comm_q = group_comm_qubits[idx]
             comm_idx = new_circ.get_index(comm_q)
 
-            # 普通 qubit 指向该组通信 qubit
+            # Regular qubits point to the communication qubit for their group.
             for qi in group:
                 qubit_tele[new_circ.get_index(old2new[qi])] = comm_idx
 
-            # 通信 qubit 自己设为 -1
+            # Communication qubits point to -1.
             qubit_tele[comm_idx] = -1
             idx += 1
 
-            # 若该组需要 entanglement swapping，则还要处理多出来的通信 qubit
+            # Handle the extra communication qubit for groups that need entanglement swapping.
             if self.Entanglement_swapping[gid] == 1:
                 swap_comm_q = group_comm_qubits[idx]
                 swap_comm_idx = new_circ.get_index(swap_comm_q)
-                qubit_tele[swap_comm_idx] = -1  # 交换通信 qubit 也设为 -1
+                qubit_tele[swap_comm_idx] = -1  # The swapping communication qubit also points to -1.
                 idx += 1
 
-        # 赋值
+        # Assign the communication-qubit map.
         new_circ.qubit_tele = qubit_tele
 
         self.step.append(new_circ)
@@ -647,27 +647,27 @@ class DQCCircuit(QuantumCircuit):
         
         old_circ = self.step[3]
 
-        # === 1. 构建新电路（仅复制量子比特）===
+        # === 1. Build a new circuit with quantum bits only. ===
         new_circ = DQCCircuit(old_circ.qubits)
         new_circ.qubit_group = old_circ.qubit_group
         new_circ.qubit_tele = old_circ.qubit_tele
         group_tele = {gid: self.step[3].qubit_tele[self.step[3].qubit_group.index(gid)] for gid in set(self.step[3].qubit_group)}
 
-        # === 2. 继承所有经典寄存器 ===
-        # 复制通信寄存器（如果有）
+        # === 2. Preserve all classical registers. ===
+        # Copy communication registers, if any.
         comm_cregs = [creg for creg in getattr(old_circ, "cregs", []) if "Tele" in creg.name]
         for comm_creg in comm_cregs:
             new_circ.add_register(ClassicalRegister(len(comm_creg), comm_creg.name))
 
-        # 复制原始寄存器（如果有）
+        # Copy original registers, if any.
         orig_cregs = [creg for creg in getattr(old_circ, "cregs", []) if "Tele" not in creg.name]
         for orig_creg in orig_cregs:
             new_circ.add_register(ClassicalRegister(len(orig_creg), orig_creg.name))
 
 
-        idx_counter = 0  # 全局 index 计数器
+        idx_counter = 0  # Global index counter
 
-        # === 4. 改写电路 ===
+        # === 4. Rewrite the circuit. ===
         for inst_obj in old_circ.data:
             instr = inst_obj.operation
             qargs = inst_obj.qubits
@@ -678,7 +678,7 @@ class DQCCircuit(QuantumCircuit):
                 g_tgt = new_circ.qubit_group[old_circ.get_index(tgt)]
 
                 if g_ctrl != g_tgt:
-                    # ====== 跨组 CNOT，改写 ======
+                    # ====== Rewrite cross-group CNOT. ======
                     ctrl_index = old_circ.get_index(ctrl)
                     tgt_index = old_circ.get_index(tgt)
                     ctrl_comm_index = old_circ.qubit_tele[ctrl_index]
@@ -715,23 +715,23 @@ class DQCCircuit(QuantumCircuit):
 
                     self.Num_RemoteGate += 1
                 else:
-                    # ====== 同组 CNOT，保持原样 ======
+                    # ====== Keep same-group CNOT unchanged. ======
                     new_circ.append(instr, qargs, cargs)
             elif instr.name == "measure":
-                # ====== 测量指令替换为 AnsM ======
+                # ====== Replace measurement with AnsM. ======
                 qarg = qargs[0]
                 carg = cargs[0] if cargs else None
 
-                # 获取经典比特在其寄存器中的索引
+                # Get the classical bit index in its register.
                 if carg is not None:
                     mea_index = old_circ.find_bit(carg).index
                 else:
-                    mea_index = -1  # 没有关联经典比特
+                    mea_index = -1  # No associated classical bit.
 
-                # 创建 AnsM 占位指令
+                # Create the AnsM placeholder instruction.
                 ansm_gate = AnsM(mea_index)
 
-                # 添加到新电路
+                # Add it to the new circuit.
                 new_circ.append(ansm_gate, [qarg])
             elif instr.name == "S_CX":
                 path = instr.path
@@ -818,7 +818,7 @@ class DQCCircuit(QuantumCircuit):
                 new_circ.append(mx_inst, [tgt_comm, tgt_q])
                 idx_counter += 1   
             else:
-                # 不是 CNOT 和 Mesurement，保持原样
+                # Keep non-CNOT and non-measurement instructions unchanged.
                 new_circ.append(instr, qargs, cargs)
 
         self.step.append(new_circ)
@@ -835,22 +835,22 @@ class DQCCircuit(QuantumCircuit):
         sub_circuits = []
 
         if all(isinstance(x, int) for x in config):
-            # 按数量顺序分割, 例如 [2,2,3]
+            # Split by group sizes in order, for example [2, 2, 3].
             start = 0
             for s in config:
                 sub = DQCCircuit(s)
                 sub.qubit_group = temp_circuit.qubit_group[start:start+s]
 
-                # 给子电路加 classical bits
+                # Add classical bits to the sub-circuit.
                 num_clbits = (len(config) - 1) * 2
                 if num_clbits > 0:
                     creg = ClassicalRegister(num_clbits, "c")
                     sub.add_register(creg)
 
-                # 复制原电路对应 qubit 的操作
+                # Copy operations from the corresponding qubits in the source circuit.
                 for instr in temp_circuit.data:
                     qubit_indices = [temp_circuit.get_index(q) for q in instr.qubits]
-                    # 只保留属于子电路的 qubit
+                    # Keep only qubits that belong to this sub-circuit.
                     indices_in_sub = [i for i, qi in enumerate(qubit_indices) if start <= qi < start+s]
                     if indices_in_sub:
                         new_qargs = [sub.qubits[qi - start] for i, qi in enumerate(qubit_indices) if i in indices_in_sub]
@@ -862,14 +862,14 @@ class DQCCircuit(QuantumCircuit):
                 start += s
 
         elif all(isinstance(x, (list, tuple)) for x in config):
-            # 按指定索引组合, 例如 [[1,3],[0,2,4]]
+            # Split by explicit index groups, for example [[1, 3], [0, 2, 4]].
             for indices in config:
                 sub = DQCCircuit(len(indices))
                 sub.qubit_type = [self.qubit_type[i] for i in indices]
 
                 for instr in self.data:
                     qubit_indices = [self.get_index(q) for q in instr.qubits]
-                    # 只保留在 indices 中的 qubit
+                    # Keep only qubits included in indices.
                     indices_in_sub = [i for i, qi in enumerate(qubit_indices) if qi in indices]
                     if indices_in_sub:
                         new_qargs = [sub.qubits[indices.index(qi)] for i, qi in enumerate(qubit_indices) if i in indices_in_sub]
@@ -887,7 +887,7 @@ class DQCCircuit(QuantumCircuit):
     # Protect custom instructions with barriers
     def protect_custom_instructions(self, subcirc):
         """
-        为 RemoteGate、Measurement、If_X、If_Z、AnsM 添加 barrier 保护。
+        Add barrier protection around RemoteGate, Measurement, If_X, If_Z, and AnsM.
         """
         new_circ = DQCCircuit(*subcirc.qregs, *subcirc.cregs)
         
@@ -896,7 +896,7 @@ class DQCCircuit(QuantumCircuit):
             qargs = inst_obj.qubits
             cargs = inst_obj.clbits
 
-            if isinstance(inst, (MX, MZ, AnsM, IF_Z, IF_X, MS, S_CX)):               # 在同样的 qubits 上加 barrier
+            if isinstance(inst, (MX, MZ, AnsM, IF_Z, IF_X, MS, S_CX)):               # Add barriers on the same qubits.
                 new_circ.barrier(*qargs)
                 new_circ.append(inst, qargs, cargs)
                 new_circ.barrier(*qargs)
@@ -913,7 +913,7 @@ class DQCCircuit(QuantumCircuit):
     # Restore custom instructions by removing barriers
     def restore_custom_instructions(self, subcirc):
         """
-        还原 RemoteGate、Measurement、If_X、If_Z、AnsM 的 barrier 保护。
+        Remove barrier protection around RemoteGate, Measurement, If_X, If_Z, and AnsM.
         """
         new_circ = DQCCircuit(*subcirc.qregs, *subcirc.cregs)
         
@@ -938,7 +938,7 @@ class DQCCircuit(QuantumCircuit):
                         corresponding to the sub-circuit's logical qubits
                         e.g. [[0,1,2,3], [5,6,7,8]]
         """
-        # ---- 按 qpu_id 排序 ----
+        # ---- Sort by qpu_id. ----
         self.qpus = sorted(qpus, key=lambda x: x.qpu_id)
 
         if not self.sub_circuit:
@@ -948,12 +948,12 @@ class DQCCircuit(QuantumCircuit):
                 f"Number of QPUs ({len(qpus)}) does not match number of sub-circuits ({len(self.sub_circuit)})."
             )
 
-        # ---- 检查 layout_out ----
+        # ---- Validate layout_out. ----
         if layout_out is not None:
             if len(layout_out) != len(self.sub_circuit):
                 raise ValueError("layout_out length must match number of sub-circuits.")
 
-        # ---- 检查子电路规模是否符合后端限制 ----
+        # ---- Check whether each sub-circuit fits its backend. ----
         for idx, (sub_circ, qpu) in enumerate(zip(self.sub_circuit, qpus)):
             backend = qpu.backend
             size = sub_circ.num_qubits
@@ -969,17 +969,17 @@ class DQCCircuit(QuantumCircuit):
 
         self.sub_circuit_trans = []
 
-        # ---- 对每个子电路执行 transpile ----
+        # ---- Transpile each sub-circuit. ----
         for idx, (sub, qpu) in enumerate(zip(self.sub_circuit, qpus)):
             try:
-                # Step 1: 保护自定义指令
+                # Step 1: Protect custom instructions.
                 sub = self.protect_custom_instructions(sub)
 
                 layout = None
                 if layout_out is not None and idx < len(layout_out):
                     layout = layout_out[idx]
 
-                # Step 3: 调用 transpile
+                # Step 3: Call transpile.
                 if layout is not None:
                     sub = transpile(
                         sub,
@@ -994,7 +994,7 @@ class DQCCircuit(QuantumCircuit):
                         optimization_level=3,
                     )
 
-                # Step 4: 还原自定义指令
+                # Step 4: Restore custom instructions.
                 sub = self.restore_custom_instructions(sub)
 
                 self.sub_circuit_trans.append(sub)
@@ -1009,11 +1009,12 @@ class DQCCircuit(QuantumCircuit):
     # Merge the transpiled sub-circuits into a complete circuit
     def merge_trans_circuits(self, comm_noise = False):
         """
-        将 self.sub_circuit_trans 中的子电路组合成完整电路。
-        支持跨电路配对操作 (R, M+IF_X/IF_Z), 通过栈实现返回上层逻辑。
-        双向配对：无论先遇到 M 还是 IF_X/IF_Z 都能触发配对。
+        Combine sub-circuits from self.sub_circuit_trans into a complete circuit.
+        Supports cross-circuit paired operations (R, M+IF_X/IF_Z) and uses a stack
+        to return to the caller circuit.
+        Bidirectional pairing works no matter whether M or IF_X/IF_Z is visited first.
         """
-        # === 构建 qubit / cbit 映射 ===
+        # === Build qubit and cbit maps. ===
         qubits_map = {}
         merged_qubits_map = {}
         cbits_map = {}
@@ -1039,16 +1040,16 @@ class DQCCircuit(QuantumCircuit):
                     cbits_map[(i, j)] = global_c_index
                     global_c_index += 1
 
-        # === 初始化变量 ===
-        # 创建新电路（只初始化量子比特）
+        # === Initialize state. ===
+        # Create a new circuit with quantum bits only.
         new_circ = DQCCircuit(len(qubits_map))
         new_circ.qubit_group = self.step[1].qubit_group
 
-        # === 1. 添加通信寄存器 ===
+        # === 1. Add the communication register. ===
         tele_creg = ClassicalRegister(len(cbits_map), "Tele")
         new_circ.add_register(tele_creg)
 
-        # === 2. 保留原始经典寄存器 ===
+        # === 2. Preserve original classical registers. ===
         if hasattr(self, "clbits") and self.clbits:
             if hasattr(self, "cregs") and self.cregs:
                 orig_name = self.cregs[0].name
@@ -1060,12 +1061,12 @@ class DQCCircuit(QuantumCircuit):
         indices = [0] * len(self.sub_circuit_trans)
         paired_op = {}      # {index: (sub_index, instr)}
         paired_op2 = {}      
-        paired_done = set() # 已完成配对
+        paired_done = set() # Completed pairing indices.
         call_stack = []
         now = 0
         step = 0
 
-        # 条件操作函数
+        # Helper for conditional operations.
         def apply_conditional_gate(gate_list, qubit, clbit):
             with new_circ.if_test((clbit, 1)):
                 for instr in gate_list:
@@ -1096,7 +1097,7 @@ class DQCCircuit(QuantumCircuit):
 
             # print(f"\n[STEP] now={now}, target={target},idx={idx}, inst={inst.name}, indices={indices}")
 
-            # === R 门配对生成 Bell 态 ===
+            # === Pair R gates to create a Bell state. ===
             if op_name == "R" and idx not in paired_done:
                 target_sub = self.sub_circuit_trans[target] if target is not None else None
 
@@ -1116,12 +1117,12 @@ class DQCCircuit(QuantumCircuit):
                     new_circ.initialize([1/np.sqrt(2),0,0,1/np.sqrt(2)], first_qs + target_qs)
                     if comm_noise:
                         noise_instr = self.qpugroup.get_noise_instruction(first_now, now)
-                        # 插入噪声，映射到新电路 qubit
+                        # Insert noise mapped to the new circuit qubits.
                         if isinstance(target_qs, list):
-                            # 对列表中所有量子比特加噪声
+                            # Apply noise to all qubits in the list.
                             noise_qargs = [new_circ.qubits[i] for i in target_qs]
                         else:
-                            # 对单个 qubit 加噪声
+                            # Apply noise to one qubit.
                             noise_qargs = [new_circ.qubits[target_qs]]
 
                         if noise_instr is not None:
@@ -1133,7 +1134,7 @@ class DQCCircuit(QuantumCircuit):
                     now = call_stack.pop() if call_stack else now
                     continue
 
-            # === M / IF_X / IF_Z 双向配对 ===
+            # === Bidirectional M / IF_X / IF_Z pairing. ===
             elif op_name in ("MX", "MZ") and idx not in paired_done:
                 if idx not in paired_op:
                     paired_op[idx] = now
@@ -1142,7 +1143,7 @@ class DQCCircuit(QuantumCircuit):
                         now = target
                     continue
 
-                # 已经配对
+                # Pair already found.
                 first_now = paired_op.pop(idx)
                 first_sub = self.sub_circuit_trans[first_now]
                 first_instr = first_sub.data[indices[first_now]]
@@ -1151,7 +1152,7 @@ class DQCCircuit(QuantumCircuit):
                             for q in first_instr.qubits]
                 target_qs = global_qs
 
-                # classical bit 对应
+                # Classical-bit mapping.
                 cbit_idx1 = cbits_map[(now, first_now)]
                 cbit_idx2 = cbits_map[(first_now, now)]
                 clbit_obj1 = new_circ.clbits[cbit_idx1]
@@ -1171,18 +1172,18 @@ class DQCCircuit(QuantumCircuit):
                     apply_conditional_gate(self.qpus[first_now].compile_z_gate(), first_qs[0], clbit_obj2)
                     
 
-                # 更新状态
+                # Update state.
                 paired_done.add(idx)
                 indices[now] += 1
                 indices[first_now] += 1
                 now = call_stack.pop() if call_stack else now
                 continue
             elif op_name == "ANS_M":
-                # global_qs[0] 是量子比特索引，mea 是存储的经典比特索引
+                # global_qs[0] is the qubit index; mea stores the classical-bit index.
                 q_idx = global_qs[0]
-                c_idx = mea  # mea 已经是全局经典比特索引
+                c_idx = mea  # mea is already a global classical-bit index.
 
-                # 在 new_circ 中找到对应的 Clbit 对象
+                # Find the corresponding Clbit object in new_circ.
                 clbit_obj = None
                 temp_idx = c_idx
                 for creg in new_circ.cregs:
@@ -1195,7 +1196,7 @@ class DQCCircuit(QuantumCircuit):
                 if clbit_obj is None:
                     raise ValueError(f"Cannot find the classical bit index {c_idx} corresponding to a Clbit")
 
-                # 添加测量操作
+                # Add the measurement operation.
                 new_circ.measure(new_circ.qubits[q_idx], clbit_obj)
                 indices[now] += 1
                 continue
@@ -1214,7 +1215,7 @@ class DQCCircuit(QuantumCircuit):
                         now = target
                     continue
 
-                # 已经配对
+                # Pair already found.
                 first_now = paired_op.pop(idx)
                 first_sub = self.sub_circuit_trans[first_now]
                 first_instr = first_sub.data[indices[first_now]]
@@ -1233,7 +1234,7 @@ class DQCCircuit(QuantumCircuit):
                 third_qs = [qubits_map[(now, self.sub_circuit_trans[now].find_bit(q).index)] 
                             for q in instr.qubits]
 
-                # classical bit 对应
+                # Classical-bit mapping.
                 cbit_idx1 = cbits_map[(first_now, second_now)]  
                 cbit_idx2 = cbits_map[(second_now, first_now)]  
                 cbit_idx3 = cbits_map[(second_now, now)]        
@@ -1263,7 +1264,7 @@ class DQCCircuit(QuantumCircuit):
                     apply_conditional_gate(self.qpus[second_now].compile_z_gate(), second_qs, clbit_obj4)
                     new_circ.measure(third_qs[1], clbit_obj5)
                     apply_conditional_gate(self.qpus[first_now].compile_x_gate(), first_qs, clbit_obj5)
-                # 更新状态
+                # Update state.
                 paired_done.add(idx)
                 indices[now] += 1
                 indices[first_now] += 1
@@ -1271,7 +1272,7 @@ class DQCCircuit(QuantumCircuit):
                 now = call_stack.pop() if call_stack else now
                 now = call_stack.pop() if call_stack else now
                 continue
-            # === 普通门 ===
+            # === Regular gate. ===
             else:
                 new_circ.append(inst, global_qs, [])
                 indices[now] += 1
@@ -1287,67 +1288,68 @@ class DQCCircuit(QuantumCircuit):
     
     def decompose_and_get_data(self, instr: CircuitInstruction, basis_gates=None):
         """
-        递归分解单个指令到基础门集。
+        Recursively decompose one instruction into the basis-gate set.
         
-        参数:
-            instr: 待分解的 CircuitInstruction
-            basis_gates: 允许的基础门名称集合（默认: {'cx'} + 单比特门）
+        Args:
+            instr: CircuitInstruction to decompose.
+            basis_gates: Allowed basis-gate names. Defaults to {'cx'} plus single-qubit gates.
         
-        返回:
-            保留原始 qubit 引用的 CircuitInstruction 列表（可直接用于 circuit.data）
+        Returns:
+            A list of CircuitInstruction objects preserving original qubit references.
         """
         if basis_gates is None:
-            # 定义基础门集合
+            # Define the basis-gate set.
             basis_gates = {'cx', 'u3', 'u2', 'u1', 'id', 'x', 'y', 'z', 
                         'h', 's', 't', 'rx', 'ry', 'rz', 'sx', 'p'}
         
-        # 如果是基础门或没有定义，直接返回
+        # Return directly for basis gates or operations without a definition.
         if (not hasattr(instr.operation, "definition") or 
             instr.operation.name in basis_gates):
             return [instr]
         
-        # 创建临时电路进行分解
+        # Create a temporary circuit for decomposition.
         n_qubits = len(instr.qubits)
         qc_temp = QuantumCircuit(n_qubits)
         qc_temp.append(instr.operation, list(range(n_qubits)))
         
-        # 建立临时 qubit 到原始 qubit 的映射
-        # 临时电路的 qc_temp.qubits[i] 对应原始的 instr.qubits[i]
+        # Map temporary qubits back to original qubits.
+        # qc_temp.qubits[i] corresponds to instr.qubits[i].
         temp_to_orig = {qc_temp.qubits[i]: instr.qubits[i] for i in range(n_qubits)}
         
-        # 分解一次
+        # Decompose once.
         decomposed = qc_temp.decompose()
         
         result = []
         for sub_instr in decomposed.data:
-            # 使用映射字典将临时 qubit 对象映射回原始 qubit 对象
+            # Map temporary qubit objects back to original qubit objects.
             mapped_qubits = [temp_to_orig[q] for q in sub_instr.qubits]
             
-            # 创建新的指令
+            # Create a new instruction.
             new_instr = CircuitInstruction(
                 sub_instr.operation, 
                 mapped_qubits, 
                 sub_instr.clbits
             )
             
-            # 递归分解（如果还需要）
+            # Recursively decompose again if needed.
             result.extend(self.decompose_and_get_data(new_instr, basis_gates))
         
         return result
 
     def reduce_noise_model(self, subset_qubits, noise_model=None, coupling_map=None):
         """
-        裁剪 NoiseModel，使其只保留 subset_qubits 上的噪声，同时保留 basis_gates、description 和可选耦合图。
+        Reduce a NoiseModel so it keeps only noise on subset_qubits while preserving
+        basis_gates, description, and the optional coupling map.
         
-        参数:
+        Args:
             subset_qubits: list[int]
-                需要保留噪声的量子比特
-            noise_model: NoiseModel, 可选
-                如果不提供，则使用 self.backend_noise_model
-            coupling_map: list[tuple], 可选
-                如果提供，则裁剪耦合图
+                Qubits whose noise should be retained.
+            noise_model: Optional NoiseModel.
+                Uses self.backend_noise_model when not provided.
+            coupling_map: Optional list[tuple].
+                If provided, the coupling map is reduced as well.
 
-        返回:
+        Returns:
             NoiseModel
         """
 
@@ -1356,30 +1358,30 @@ class DQCCircuit(QuantumCircuit):
                 raise ValueError("No noise model provided or set in self.backend_noise_model.")
             noise_model = self.backend_noise_model
 
-        # 如果 Qiskit 版本支持 reduce()，优先使用
+        # Prefer Qiskit's reduce() method when available.
         if hasattr(noise_model, "reduce"):
             return noise_model.reduce(subset_qubits)
 
         sub_model = NoiseModel()
 
-        # --- 1️⃣ 保留量子门噪声 ---
+        # --- 1. Preserve quantum-gate noise. ---
         for instr_name, qerrors in noise_model._local_quantum_errors.items():
             for qubits, error in qerrors.items():
                 if all(q in subset_qubits for q in qubits):
                     sub_model.add_quantum_error(error, instr_name, qubits)
 
-        # --- 2️⃣ 保留读出噪声 (measure) ---
+        # --- 2. Preserve readout noise (measure). ---
         for qubit, error in noise_model._local_readout_errors.items():
-            if qubit[0] in subset_qubits:  # qubit 是 tuple，如 (0,)
+            if qubit[0] in subset_qubits:  # qubit is a tuple, for example (0,).
                 sub_model.add_readout_error(error, [qubit[0]])  
 
-        # --- 3️⃣ 保留 basis_gates 和 description ---
+        # --- 3. Preserve basis_gates and description. ---
         if hasattr(noise_model, "basis_gates"):
             sub_model._basis_gates = list(noise_model.basis_gates)
         if hasattr(noise_model, "description"):
             sub_model._description = noise_model.description
 
-        # --- 4️⃣ 可选裁剪耦合图 ---
+        # --- 4. Optionally reduce the coupling map. ---
         target_coupling_map = coupling_map if coupling_map is not None else getattr(self, "coupling_map", None)
         if target_coupling_map is not None:
             sub_model._coupling_map = [edge for edge in target_coupling_map if all(q in subset_qubits for q in edge)]
@@ -1391,10 +1393,10 @@ class DQCCircuit(QuantumCircuit):
     # Get a combined noise model for the distributed circuit based on QPU backends
     def get_noise_model(self):
         """
-        构建一个综合噪声模型 (combined_noise_model)，
-        将多个 QPU 的噪声模型裁剪后合并，并映射到全局连续 qubit。
+        Build a combined noise model by reducing and merging noise models from
+        multiple QPUs, then mapping them to global contiguous qubits.
         """
-        # === Step 1: 参数检查 ===
+        # === Step 1: Validate inputs. ===
         qpus = self.qpugroup.qpus
         qpus = sorted(qpus, key=lambda x: x.qpu_id)
         if not self.sub_circuit:
@@ -1404,7 +1406,7 @@ class DQCCircuit(QuantumCircuit):
                 f"Number of QPUs ({len(qpus)}) does not match sub-circuits ({len(self.sub_circuit)})."
             )
 
-        # === Step 2: 提取每个子电路对应的局部 qubit ===
+        # === Step 2: Extract local qubits for each sub-circuit. ===
         sub_qubit_maps = []
         for idx, _ in enumerate(self.sub_circuit):
             local_qubits = [
@@ -1414,49 +1416,49 @@ class DQCCircuit(QuantumCircuit):
             ]
             sub_qubit_maps.append(local_qubits)
 
-        # === Step 3: 构建全局 qubit 映射 (sub_idx, local_qubit) -> global_qubit ===
+        # === Step 3: Build global qubit mapping (sub_idx, local_qubit) -> global_qubit. ===
         qubit_mapping = self.merged_qubits_map_reverse
 
-        # === Step 4: 初始化全局 NoiseModel ===
+        # === Step 4: Initialize the global NoiseModel. ===
         combined_noise_model = NoiseModel()
         combined_basis_gates = set()
 
-        # === Step 5: 对每个 QPU 裁剪并合并噪声 ===
+        # === Step 5: Reduce and merge noise for each QPU. ===
         for idx, qpu in enumerate(qpus):
             backend_noise = NoiseModel.from_backend(qpu.backend)
             local_qubits = sub_qubit_maps[idx]
 
-            # --- 5a. 裁剪局部噪声 ---
+            # --- 5a. Reduce local noise. ---
             reduced_noise = self.reduce_noise_model(
                 subset_qubits=local_qubits,
                 noise_model=backend_noise,
                 coupling_map=qpu.backend.coupling_map
             )
 
-            # --- 5b. 合并量子门噪声 ---
+            # --- 5b. Merge quantum-gate noise. ---
             for instr_name, qerrors in reduced_noise._local_quantum_errors.items():
                 for qubits_tuple, error in qerrors.items():
-                    # 解包 qubit
+                    # Unpack qubits.
                     qubit_indices = [q if isinstance(q, int) else q[0] for q in qubits_tuple]
                     global_qubits = tuple(qubit_mapping[(idx, q)] for q in qubit_indices)
                     combined_noise_model.add_quantum_error(error, instr_name, global_qubits)
                     # print(f"Added quantum error: {instr_name}, local {qubit_indices} -> global {global_qubits}")
 
-            # --- 5c. 合并读出噪声 ---
+            # --- 5c. Merge readout noise. ---
             for qubit, error in reduced_noise._local_readout_errors.items():
                 q_local = qubit[0] if isinstance(qubit, tuple) else qubit
                 if (idx, q_local) not in qubit_mapping:
-                    print(f"⚠️ Warning: qubit mapping missing for {(idx, q_local)}")
+                    print(f"[Warning] Qubit mapping missing for {(idx, q_local)}")
                     continue
                 global_qubit = qubit_mapping[(idx, q_local)]
                 combined_noise_model.add_readout_error(error, [global_qubit])
                 # print(f"Added readout error: local {q_local} -> global {global_qubit}")
 
-            # --- 5d. 汇总 basis_gates ---
+            # --- 5d. Collect basis_gates. ---
             if hasattr(reduced_noise, "basis_gates"):
                 combined_basis_gates.update(reduced_noise.basis_gates)
 
-        # === Step 6: 写入全局基础门、描述信息 ===
+        # === Step 6: Store global basis gates and description. ===
         combined_noise_model._basis_gates = list(combined_basis_gates)
         combined_noise_model._description = "Combined noise model from multiple QPUs"
 
@@ -1472,12 +1474,12 @@ def detect_swap_pattern(circuit):
         inst2 = instructions[i + 1]
         inst3 = instructions[i + 2]
         
-        # 检查是否都是 CX 门
+        # Check whether all three instructions are CX gates.
         if (inst1.operation.name == 'cx' and 
             inst2.operation.name == 'cx' and 
             inst3.operation.name == 'cx'):
             
-            # 获取量子比特索引
+            # Get qubit indices.
             q1_0 = circuit.find_bit(inst1.qubits[0]).index
             q1_1 = circuit.find_bit(inst1.qubits[1]).index
             
@@ -1487,19 +1489,19 @@ def detect_swap_pattern(circuit):
             q3_0 = circuit.find_bit(inst3.qubits[0]).index
             q3_1 = circuit.find_bit(inst3.qubits[1]).index
             
-            # 检查 SWAP 模式: CX(a,b), CX(b,a), CX(a,b)
-            if (q1_0 == q3_0 and q1_1 == q3_1 and  # 第1和第3个相同
-                q2_0 == q1_1 and q2_1 == q1_0):     # 第2个是反向的
+            # Check the SWAP pattern: CX(a, b), CX(b, a), CX(a, b).
+            if (q1_0 == q3_0 and q1_1 == q3_1 and  # First and third gates match.
+                q2_0 == q1_1 and q2_1 == q1_0):     # The second gate is reversed.
                 swap_count += 1
-                print(f"  检测到 SWAP 模式在位置 {i}: q{q1_0} ↔ q{q1_1}")
-                i += 3  # 跳过这3个门
+                print(f"  Detected SWAP pattern at position {i}: q{q1_0} <-> q{q1_1}")
+                i += 3  # Skip these three gates.
                 continue
         
         i += 1
     
     print("\n" + "=" * 70)
-    print("检测 CNOT 模式")
+    print("Detect CNOT pattern")
     print("=" * 70)
-    print(f"检测到的 SWAP 数量: {swap_count}")
+    print(f"Detected SWAP count: {swap_count}")
     
-    return swap_count   
+    return swap_count

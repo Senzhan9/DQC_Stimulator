@@ -30,8 +30,8 @@ class IonQ(BackendV2):
         self.fidelity_spam_mean = 0.9974
         
         # Timing parameters (in seconds)
-        self.t_readout = 0.00005  # 50 μs
-        self.t_reset = 0.000015   # 15 μs
+        self.t_readout = 0.00005  # 50 us
+        self.t_reset = 0.000015   # 15 us
         self.t_1q = 0.000135      # 135 ns
         self.t_2q = 0.0006        # 600 ns
         self.t1_time = 10         # 10 s
@@ -44,8 +44,8 @@ class IonQ(BackendV2):
         qubit_properties = []
         for i in range(self._num_qubits):
             # Add some variation to T1 and T2 times
-            t1_var = rng.uniform(-0.5, 0.5)  # ±0.5s variation
-            t2_var = rng.uniform(-0.1, 0.1)  # ±0.1s variation
+            t1_var = rng.uniform(-0.5, 0.5)  # +/-0.5 s variation
+            t2_var = rng.uniform(-0.1, 0.1)  # +/-0.1 s variation
             
             qubit_properties.append(
                 QubitProperties(
